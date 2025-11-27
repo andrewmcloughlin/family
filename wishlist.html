@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimalist Physics Profiles (Bootstrap)</title>
+    <!-- Load Bootstrap 5 CSS via CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" xintegrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <!-- Load Inter Font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        html, body {
+            height: 100%;
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb; /* Light background */
+            overflow: hidden; /* Hide potential scrollbars from physics canvas */
+        }
+        /* Custom styles to ensure the canvas covers the viewport */
+        #physics-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1; 
+        }
+    </style>
+    <!-- Load Matter.js Physics Engine via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.18.0/matter.min.js"></script>
+</head>
+<body class="d-flex flex-column justify-content-center align-items-center p-4">
+
+    <!-- Physics Container: This is where the Matter.js canvas will be injected -->
+    <div id="physics-container" class="flex-grow-1"></div>
+
+    <!-- Overlay for showing the name on hover -->
+    <div id="name-overlay" style="
+        position: absolute; 
+        pointer-events: none; /* IMPORTANT: Allows mouse to click/drag the canvas beneath */
+        z-index: 20; 
+        opacity: 0;
+        transition: opacity 0.2s ease-in-out;
+    ">
+        <div id="name-box" class="px-3 py-1 rounded-pill shadow-lg text-white text-sm fw-bold" style="transform: translate(-50%, -150%); white-space: nowrap;">
+            <!-- Name will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        // Use a self-executing function to keep variables local
+        (function() {
+            // Setup aliases for Matter.js modules
+            const { Engine, Render, World, Bodies, Runner, Mouse, MouseConstraint, Events, Query } = Matter;
+
+            // Define the physics canvas container
+            const container = document.getElementById('physics-container');
+            const nameOverlay = document.getElementById('name-overlay');
+            const nameBox = document.getElementById('name-box');
+
+            // --- Profile Data (Custom name, color, and image URL) ---
+            const profilesData = [
+                // === START: RELATIVE PATHS FOR LOCAL/DEPLOYMENT TESTING ===
+                // IMPORTANT: Replace these paths with the actual relative paths to your image files.
+                { name: 'Ada', color: '#1e40af', image: './assets/Ada.png' }, 
+                { name: 'Maggie', color: '#b91c1c', image: './assets/Maggie.png' }, 
+                { name: 'Andy', color: '#059669', image: './assets/Andy.png' } 
+                // === END: RELATIVE PATHS FOR LOCAL/DEPLOYMENT TESTING ===
+            ];
+            const profileRadius = 50; // Radius of the circular profiles (100px diameter)
+            let profileBodies = []; // Array to hold the Matter bodies for hover detection
+
+            // Create a physics engine
+            const engine = Engine.create();
+            const world = engine.world;
+
+            // Set gravity to zero so the custom center force is dominant
+            world.gravity.y = 0; 
+
+            // Function to set up the renderer and physics
+            function setupPhysics() {
+                // Clear any existing children (useful for resize)
+                container.innerHTML = '';
+
+                const containerWidth = container.clientWidth;
+                const containerHeight = container.clientHeight;
+
+                // Create a renderer (which adds a canvas element to the container)
+                const render = Render.create({
+                    element: container,
+                    engine: engine,
+                    options: {
+                        width: containerWidth,
+                        height: containerHeight,
+                        wireframes: false, // Use sprites/colors
+                        background: 'transparent' // Make the background transparent
+                    }
+                });
+
+                // Run the renderer
+                Render.run(render);
+
+                // Create a runner for updating the engine
+                const runner = Runner.create();
+                Runner.run(runner, engine);
+
+                // Clear body list before re-creation on resize
+                profileBodies = [];
+                World.clear(world, false); // Clear bodies but keep constraints/mouse
+
+                // --- 1. Create Static Boundaries (Invisible Walls) ---
+                const wallThickness = 50;
+                World.add(world, [
+                    // top, bottom, left, right walls
+                    Bodies.rectangle(containerWidth / 2, -wallThickness / 2, containerWidth, wallThickness, { isStatic: true, label: 'Wall' }),
+                    Bodies.rectangle(containerWidth / 2, containerHeight + wallThickness / 2, containerWidth, wallThickness, { isStatic: true, label: 'Wall' }),
+                    Bodies.rectangle(-wallThickness / 2, containerHeight / 2, wallThickness, containerHeight, { isStatic: true, label: 'Wall' }),
+                    Bodies.rectangle(containerWidth + wallThickness / 2, containerHeight / 2, wallThickness, containerHeight, { isStatic: true, label: 'Wall' })
+                ]);
+
+                // --- 2. Create Profile Bodies (Circular and Bouncy) ---
+                const profiles = [];
+                const initialXPositions = [
+                    containerWidth * 0.2, 
+                    containerWidth * 0.5, 
+                    containerWidth * 0.8  
+                ];
+                const initialY = containerHeight * 0.3; 
+
+                // We assume user images are large (e.g., 500x500).
+                // The target size is 100px (2 * profileRadius). 
+                // Scale factor = Target Size / Assumed Source Size -> 100 / 500 = 0.2
+                const imageScaleFactor = 0.1; 
+
+                profilesData.forEach((data, index) => {
+                    const profileBody = Bodies.circle(
+                        initialXPositions[index],
+                        initialY,
+                        profileRadius,
+                        {
+                            label: `Profile-${data.name}`,
+                            restitution: 0.9, 
+                            frictionAir: 0.01, 
+                            mass: 5,
+                            profileData: data, // Attach custom data
+                            render: {
+                                // RENDER: Use sprite for image
+                                sprite: {
+                                    texture: data.image, // The image URL (now a relative path)
+                                    xScale: imageScaleFactor, 
+                                    yScale: imageScaleFactor
+                                },
+                                // RENDER: Add a custom color border (stroke)
+                                strokeStyle: data.color, 
+                                lineWidth: 4 
+                            }
+                        }
+                    );
+                    profiles.push(profileBody);
+                    profileBodies.push(profileBody); // Add to hover detection list
+                });
+
+                World.add(world, profiles);
+
+                // --- 3. Add Mouse Control for Dragging ---
+                const mouse = Mouse.create(render.canvas);
+                const mouseConstraint = MouseConstraint.create(engine, {
+                    mouse: mouse,
+                    constraint: {
+                        stiffness: 0.2,
+                        render: { visible: false }
+                    }
+                });
+                World.add(world, mouseConstraint);
+                render.mouse = mouse;
+
+                // --- 4. Custom Center Force (Pulls bodies to the exact center) ---
+                const center = { x: containerWidth / 2, y: containerHeight / 2 };
+                const centerForceMagnitude = 0.0001; 
+
+                Events.on(engine, 'beforeUpdate', function() {
+                    profiles.forEach(body => {
+                        const dx = center.x - body.position.x;
+                        const dy = center.y - body.position.y;
+                        const angle = Math.atan2(dy, dx);
+                        
+                        const forceX = Math.cos(angle) * centerForceMagnitude * body.mass;
+                        const forceY = Math.sin(angle) * centerForceMagnitude * body.mass;
+                        Matter.Body.applyForce(body, body.position, { x: forceX, y: forceY });
+                    });
+                });
+
+                // --- 5. Hover Detection and Name Overlay ---
+                Events.on(render, 'mousemove', function(event) {
+                    const mousePosition = event.mouse.position;
+
+                    // Query Matter.js to find any circular body under the mouse cursor
+                    const bodies = Query.point(profileBodies, mousePosition);
+
+                    if (bodies.length > 0) {
+                        const hoveredBody = bodies[0];
+                        const data = hoveredBody.profileData;
+
+                        // Position the overlay relative to the viewport/canvas
+                        nameOverlay.style.left = `${mousePosition.x}px`;
+                        nameOverlay.style.top = `${mousePosition.y}px`;
+                        
+                        // Update content and custom color
+                        nameBox.textContent = data.name;
+                        nameBox.style.backgroundColor = data.color;
+
+                        // Show the overlay
+                        nameOverlay.style.opacity = '1';
+                    } else {
+                        // Hide the overlay if not hovering
+                        nameOverlay.style.opacity = '0';
+                    }
+                });
+            }
+
+            // Initial setup
+            setupPhysics();
+
+            // Handle resizing for responsiveness
+            window.addEventListener('resize', () => {
+                // Stop and clear the current physics world for clean re-initialization
+                if (engine.runner) Runner.stop(engine.runner);
+                Engine.clear(engine);
+
+                // Re-run setup with new dimensions
+                setupPhysics();
+            });
+
+        })();
+    </script>
+    <!-- Load Bootstrap 5 JS Bundle (required for some components, good practice) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" xintegrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+</body>
+</html>
